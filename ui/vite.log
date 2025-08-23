@@ -1,0 +1,9 @@
+
+> redxmoro-ui@1.0.0 dev
+> vite --host 127.0.0.1 --port 3000
+
+
+  VITE v4.5.14  ready in 187 ms
+
+  ➜  Local:   http://127.0.0.1:3000/
+  ➜  press h to show help

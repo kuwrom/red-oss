@@ -1,0 +1,31 @@
+# Python virtual environments
+venv/
+.venv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Node.js dependencies and build output
+ui/node_modules/
+ui/dist/
+ui/.vite-cache/
+
+# Experiment results and logs
+results/
+*.log
+*.jsonl
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# macOS metadata
+.DS_Store

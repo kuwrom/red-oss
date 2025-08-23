@@ -1,0 +1,78 @@
+experiment_name: redxmoro_kaggle_sweep
+seed: 42
+output_dir: results
+stop_on_success: false
+long_context_tokens: 2000
+tool_emulation: true
+max_parallel_strategies: 8
+max_parallel_prompts: 4
+
+target_model:
+  model_name_or_path: gpt2
+  mode: simulator
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.95
+  stop: []
+  dtype: bfloat16
+  device_map: auto
+  trust_remote_code: true
+
+attacker:
+  provider: local_hf
+  model_id: gpt2
+  max_tokens: 256
+  temperature: 0.7
+  top_p: 0.95
+  system_prompt: "Attacker"
+
+adjudicator:
+  provider: local_hf
+  model_id: gpt2
+  max_tokens: 128
+  temperature: 0.2
+  top_p: 0.9
+  system_prompt: "Adjudicator"
+
+adjudication_orchestration:
+  mode: automated
+  use_kaggle_criteria: true
+
+taxonomy:
+  risks_path: configs/taxonomy/risks.yaml
+  patterns_path: configs/taxonomy/patterns.yaml
+  num_seeds_per_combo: 4
+  languages: [en, es, fr, de, zh]
+  many_shot_num_examples: 3
+  augmentations: [base, manyshot, roleplay, obfuscate]
+  methods_path: configs/taxonomy/methods.yaml
+  enable_hypotheses: true
+  num_hypotheses: 8
+  hypothesis_brief: "Offline sweep for multilingual, programmatic, roleplay, and obfuscation tactics."
+
+strategy:
+  name: novelty_search
+  params:
+    max_turns: 4
+
+strategies:
+  - name: programmatic_code_attack
+    params:
+      max_turns: 3
+  - name: iterative_refinement
+    params:
+      max_turns: 2
+  - name: evolutionary
+    params:
+      population_size: 6
+      generations: 3
+      crossover_rate: 0.7
+      mutation_rate: 0.7
+  - name: hrl
+    params:
+      max_turns: 4
+      tools_enabled: false
+strategy_presets:
+  - fast_sweep
+
+
