@@ -117,10 +117,12 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 if __name__ == "__main__":
+    # Use multiple workers to handle concurrent requests and prevent hanging from blocking operations
     uvicorn.run(
-        app,  # Pass app object directly instead of string import
+        app,
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        workers=4  # Adjust based on CPU cores; prevents single-thread blocking
     )

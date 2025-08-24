@@ -29,7 +29,7 @@ class ConfigService:
             config_id = str(uuid.uuid4())
             config_file = config_dir / f"{config_id}.json"
             
-            # Offload blocking IO to a thread
+            # Offload blocking IO to a thread with timeout
             def _write():
                 with open(config_file, 'w') as f:
                     json.dump({
@@ -37,9 +37,15 @@ class ConfigService:
                         "apiKeys": request.apiKeys,
                         "savedAt": datetime.now().isoformat()
                     }, f, indent=2)
-            await asyncio.to_thread(_write)
             
+            # Add timeout to the file write operation
+            await asyncio.wait_for(asyncio.to_thread(_write), timeout=5.0)
+            
+            logger.info(f"Successfully saved config {config_id}")
             return {"success": True, "configId": config_id}
+        except asyncio.TimeoutError:
+            logger.error("Config save operation timed out")
+            raise HTTPException(status_code=408, detail="Save operation timed out")
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -66,11 +72,18 @@ class ConfigService:
                 except Exception as e:
                     logger.warning(f"Failed to load config {path}: {e}")
                     return None
-                    
-            results = await asyncio.gather(*(asyncio.to_thread(_read_one, p) for p in files))
+            
+            # Add timeout to config listing operation
+            results = await asyncio.wait_for(
+                asyncio.gather(*(asyncio.to_thread(_read_one, p) for p in files)),
+                timeout=10.0
+            )
             configs = [r for r in results if r is not None]
             
             return configs
+        except asyncio.TimeoutError:
+            logger.error("Config list operation timed out")
+            raise HTTPException(status_code=408, detail="List operation timed out")
         except Exception as e:
             logger.error(f"Failed to list configs: {e}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -85,9 +98,14 @@ class ConfigService:
             def _read():
                 with open(config_file, 'r') as f:
                     return json.load(f)
-            data = await asyncio.to_thread(_read)
+            
+            # Add timeout to config loading operation
+            data = await asyncio.wait_for(asyncio.to_thread(_read), timeout=5.0)
             
             return data
+        except asyncio.TimeoutError:
+            logger.error(f"Config load operation timed out for {config_id}")
+            raise HTTPException(status_code=408, detail="Load operation timed out")
         except Exception as e:
             logger.error(f"Failed to load config {config_id}: {e}")
             if isinstance(e, HTTPException):

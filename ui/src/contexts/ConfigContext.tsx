@@ -209,14 +209,29 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
 
   const saveConfig = async () => {
     try {
+      // Add timeout controller for the save request
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+      
       const response = await fetch(`${apiBaseUrl}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, apiKeys })
+        body: JSON.stringify({ config, apiKeys }),
+        signal: controller.signal
       })
-      if (!response.ok) throw new Error('Failed to save config')
+      
+      clearTimeout(timeoutId)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Failed to save config: ${response.status} ${errorText}`)
+      }
+      
       await refreshSavedConfigs()
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Save operation timed out. Please try again.')
+      }
       console.error('Error saving config:', error)
       throw error
     }
@@ -224,12 +239,24 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
 
   const loadConfig = async (name: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/config/${name}`)
+      // Add timeout for config loading
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+      
+      const response = await fetch(`${apiBaseUrl}/api/config/${name}`, {
+        signal: controller.signal
+      })
+      
+      clearTimeout(timeoutId)
+      
       if (!response.ok) throw new Error('Failed to load config')
       const data = await response.json()
       setConfig(data.config)
       setApiKeys(data.apiKeys || {})
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Load operation timed out. Please try again.')
+      }
       console.error('Error loading config:', error)
       throw error
     }
@@ -237,12 +264,26 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
 
   const refreshSavedConfigs = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/configs`)
+      // Add timeout for config list fetching
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+      
+      const response = await fetch(`${apiBaseUrl}/api/configs`, {
+        signal: controller.signal
+      })
+      
+      clearTimeout(timeoutId)
+      
       if (!response.ok) throw new Error('Failed to fetch configs')
       const configs = await response.json()
       setSavedConfigs(configs)
     } catch (error) {
-      console.error('Error fetching configs:', error)
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.warn('Config list fetch timed out')
+      } else {
+        console.error('Error fetching configs:', error)
+      }
+      // Don't throw here, just log the error - UI can continue without saved configs list
     }
   }
 
