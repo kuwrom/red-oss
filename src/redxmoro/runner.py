@@ -166,17 +166,8 @@ def _build_text_client(ep_cfg, role_hint: str = "") -> TextCompletionClient:
     if provider == "vertex":
         project = getattr(ep_cfg, "gcp_project", None)
         location = getattr(ep_cfg, "gcp_location", "us-central1")
-        # If project missing, gracefully fallback to GoogleAIClient (uses API key)
         if not project:
-            warnings.warn("gcp_project not provided; falling back to GoogleAIClient with provider='google'.")
-            return GoogleAIClient(
-                model_id=ep_cfg.model_id,
-                api_key_env=getattr(ep_cfg, "google_api_key_env", "GOOGLE_API_KEY"),
-                max_tokens=ep_cfg.max_tokens,
-                temperature=ep_cfg.temperature,
-                top_p=ep_cfg.top_p,
-                system_prompt=ep_cfg.system_prompt,
-            )
+            raise ValueError("Vertex provider requires 'gcp_project'")
         vertex_client = VertexAIClient(
             model_id=ep_cfg.model_id,
             project_id=project,

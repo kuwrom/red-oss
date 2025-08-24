@@ -5,9 +5,6 @@ from typing import List, Optional, Any
 import json
 import requests
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from .config import TargetModelConfig
 from .simulators.base import SimulatorContext
 from .simulators.rag import RAGSimulator
@@ -16,9 +13,16 @@ from .simulators.codegen import CodegenSimulator
 from .simulators.moe import MoESimulator, Expert, MoERouter
 
 
-def _map_dtype(dtype_str: Optional[str]) -> Optional[torch.dtype]:
+def _map_dtype(dtype_str: Optional[str]) -> Optional[Any]:
     if dtype_str is None:
         return None
+    
+    # Lazy import torch only when needed for local models
+    try:
+        import torch
+    except ImportError:
+        raise ImportError("torch is required for local HF models. Install with: pip install torch")
+        
     mapping = {
         "float32": torch.float32,
         "float16": torch.float16,
@@ -62,6 +66,12 @@ class TargetModel:
             else:
                 self._sim = RAGSimulator(context=self._sim_context, corpus={})
             return
+        # Lazy import HF libraries only when actually using local models
+        try:
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError:
+            raise ImportError("transformers is required for local HF models. Install with: pip install transformers")
+            
         torch_dtype = _map_dtype(self.config.dtype)
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_name_or_path,
@@ -77,7 +87,6 @@ class TargetModel:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    @torch.inference_mode()
     def complete(self, prompt: str, stop: Optional[List[str]] = None, attacker_client=None) -> str:
         if self.config.mode == "http":
             # Handle auto-target mode - use attacker's client

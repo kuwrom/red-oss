@@ -1,5 +1,5 @@
-import React from 'react'
-import { Brain } from 'lucide-react'
+import React, { useState } from 'react'
+import { Brain, CheckCircle, AlertCircle, Loader } from 'lucide-react'
 import { useConfig, EndpointConfig } from '../../contexts/ConfigContext'
 
 interface EndpointSectionProps {
@@ -10,6 +10,8 @@ interface EndpointSectionProps {
 export const EndpointSection: React.FC<EndpointSectionProps> = ({ type, title }) => {
   const { config, updateConfig } = useConfig()
   const endpoint = config[type]
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
+  const [testMessage, setTestMessage] = useState<string>('')
 
   const updateEndpoint = (updates: Partial<EndpointConfig>) => {
     updateConfig({
@@ -17,15 +19,68 @@ export const EndpointSection: React.FC<EndpointSectionProps> = ({ type, title })
     })
   }
 
-  // Simplified model list - only the two models we need
+  const testConnection = async () => {
+    if (!endpoint.gcp_project || !endpoint.model_id) {
+      setTestStatus('error')
+      setTestMessage('GCP Project ID and Model are required')
+      return
+    }
+
+    setTestStatus('testing')
+    setTestMessage('Testing connection...')
+
+    try {
+      const rawBase = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`
+      const apiBaseUrl = rawBase.replace(/\/?api\/?$/, '').replace(/\/+$/, '')
+      
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+      
+      const response = await fetch(`${apiBaseUrl}/api/experiment/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: endpoint.provider,
+          model_id: endpoint.model_id,
+          gcp_project: endpoint.gcp_project,
+          gcp_location: endpoint.gcp_location
+        }),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+
+      if (data.success) {
+        setTestStatus('success')
+        setTestMessage(data.message || 'Connection successful!')
+      } else {
+        setTestStatus('error')
+        setTestMessage(data.error || 'Connection test failed')
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setTestStatus('error')
+        setTestMessage('Connection test timed out. Check your network and try again.')
+      } else {
+        setTestStatus('error')
+        setTestMessage(`Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+  }
+
+  // Available Vertex AI models - exactly what you need
   const availableModels = [
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Advanced reasoning and code capabilities' },
     { id: 'openai/gpt-oss-20b-maas', name: 'GPT-OSS 20B', description: 'Open-weight model for reasoning tasks' }
   ]
 
-  const getAvailableModels = () => {
-    return availableModels
-  }
+
 
   return (
     <div className="space-y-6">
@@ -76,20 +131,97 @@ export const EndpointSection: React.FC<EndpointSectionProps> = ({ type, title })
             </div>
           </div>
 
-          {/* Project ID - only field needed */}
+          {/* Project ID - required field */}
           <div className="space-y-2">
-            <label className="label">GCP Project ID</label>
+            <label className="label">
+              GCP Project ID <span className="text-red-500">*</span>
+            </label>
             <input
               type="text"
               value={endpoint.gcp_project || ''}
               onChange={(e) => updateEndpoint({ gcp_project: e.target.value })}
               placeholder="Enter your Google Cloud project ID"
-              className="input"
+              className={`input ${
+                endpoint.provider === 'vertex' && !endpoint.gcp_project
+                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
+                  : ''
+              }`}
+              required
             />
+            {endpoint.provider === 'vertex' && !endpoint.gcp_project && (
+              <p className="text-sm text-red-600 flex items-center">
+                <span className="mr-1">⚠️</span>
+                GCP Project ID is required for Vertex AI
+              </p>
+            )}
             <p className="text-sm text-gray-500">
               Your Google Cloud project ID (location auto-selected based on model)
             </p>
           </div>
+
+          {/* Test Connection */}
+          {endpoint.provider === 'vertex' && endpoint.gcp_project && endpoint.model_id && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={testConnection}
+                  disabled={testStatus === 'testing'}
+                  className="btn-secondary disabled:opacity-50 flex items-center"
+                >
+                  {testStatus === 'testing' ? (
+                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                  ) : testStatus === 'success' ? (
+                    <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
+                  ) : testStatus === 'error' ? (
+                    <AlertCircle className="w-4 h-4 mr-2 text-red-500" />
+                  ) : (
+                    <Brain className="w-4 h-4 mr-2" />
+                  )}
+                  Test Connection
+                </button>
+                
+                {testStatus !== 'idle' && (
+                  <span className={`text-sm ${
+                    testStatus === 'success' 
+                      ? 'text-green-600' 
+                      : testStatus === 'error' 
+                      ? 'text-red-600' 
+                      : 'text-gray-600'
+                  }`}>
+                    {testMessage}
+                  </span>
+                )}
+              </div>
+              
+              {testStatus === 'success' && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="text-sm text-green-800">
+                    <span className="font-medium">🎉 Connection verified!</span>
+                    <p className="mt-1">
+                      Your authentication and permissions are working correctly for {endpoint.model_id} in {endpoint.gcp_location}.
+                    </p>
+                  </div>
+                </div>
+              )}
+              
+              {testStatus === 'error' && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="text-sm text-red-800">
+                    <span className="font-medium">❌ Connection failed</span>
+                    <p className="mt-1">{testMessage}</p>
+                    <div className="mt-2 text-xs">
+                      <strong>Quick fixes:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Run: <code className="bg-red-100 px-1 rounded">gcloud auth application-default login</code></li>
+                        <li>Verify project ID: <code className="bg-red-100 px-1 rounded">{endpoint.gcp_project}</code></li>
+                        <li>Check Vertex AI API is enabled in your project</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Simplified Parameters */}
           <div className="grid grid-cols-2 gap-4">

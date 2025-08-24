@@ -89,7 +89,34 @@ export const StrategyControlTab: React.FC = () => {
   const [showParametersModal, setShowParametersModal] = useState(false)
   const [customParams, setCustomParams] = useState<Record<string, any>>({})
 
+  // Validation for required fields
+  const validateConfig = () => {
+    const errors: string[] = []
+    
+    // Check attacker endpoint
+    if (config.attacker?.provider === 'vertex' && !config.attacker?.gcp_project) {
+      errors.push('Attacker: GCP Project ID is required for Vertex AI')
+    }
+    
+    // Check adjudicator endpoint
+    if (config.adjudicator?.provider === 'vertex' && !config.adjudicator?.gcp_project) {
+      errors.push('Adjudicator: GCP Project ID is required for Vertex AI')
+    }
+    
+    return errors
+  }
+
+  const configErrors = validateConfig()
+  const canStart = status !== 'running' && configErrors.length === 0
+
   const handleStartSingleStrategy = async (strategyId: string) => {
+    // Validate configuration before starting
+    const errors = validateConfig()
+    if (errors.length > 0) {
+      toast.error(`Configuration errors:\n${errors.join('\n')}`)
+      return
+    }
+    
     try {
       const strategy = availableStrategies.find(s => s.id === strategyId)
       if (!strategy) {
@@ -125,6 +152,13 @@ export const StrategyControlTab: React.FC = () => {
   }
 
   const handleStartMultipleStrategies = async (strategyIds: string[]) => {
+    // Validate configuration before starting
+    const errors = validateConfig()
+    if (errors.length > 0) {
+      toast.error(`Configuration errors:\n${errors.join('\n')}`)
+      return
+    }
+    
     try {
       const strategies = strategyIds.map(id => {
         const strategy = availableStrategies.find(s => s.id === id)!
@@ -250,6 +284,7 @@ export const StrategyControlTab: React.FC = () => {
         onStop={handleStopExperiment}
         status={status}
         availableStrategies={availableStrategies}
+        configErrors={configErrors}
       />
 
       {/* Strategy Grid */}
@@ -263,7 +298,7 @@ export const StrategyControlTab: React.FC = () => {
               key={strategy.id}
               strategy={strategy}
               isRunning={isRunning}
-              canStart={status !== 'running'}
+              canStart={canStart}
               currentParams={currentParams}
               onStart={() => handleStartSingleStrategy(strategy.id)}
               onConfigure={() => openParametersModal(strategy.id)}
@@ -290,7 +325,7 @@ export const StrategyControlTab: React.FC = () => {
             <div className="flex gap-3">
               <button
                 onClick={handlePlanWithAI}
-                disabled={status === 'running'}
+                disabled={!canStart}
                 className="btn-primary disabled:opacity-50 flex items-center"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
@@ -298,7 +333,7 @@ export const StrategyControlTab: React.FC = () => {
               </button>
               <button
                 onClick={handlePlanTreeWithAI}
-                disabled={status === 'running'}
+                disabled={!canStart}
                 className="btn-secondary disabled:opacity-50 flex items-center"
               >
                 <Zap className="w-4 h-4 mr-2" />
@@ -360,7 +395,7 @@ export const StrategyControlTab: React.FC = () => {
                 </div>
                 <button
                   onClick={() => handleStartMultipleStrategies(config.strategies.map(s => s.name))}
-                  disabled={status === 'running'}
+                  disabled={!canStart}
                   className="btn-primary disabled:opacity-50"
                 >
                   <Play className="w-4 h-4 mr-2" />

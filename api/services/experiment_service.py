@@ -14,7 +14,8 @@ from typing import Dict, List, Any
 from fastapi import HTTPException
 
 from models.experiment import ExperimentRequest
-from websocket import ConnectionManager, WSMessage
+from api.websocket.connection_manager import ConnectionManager
+from api.websocket.messages import WSMessage
 from utils.config import temp_config_file, validate_experiment_config, cleanup_temp_config
 
 logger = logging.getLogger(__name__)
@@ -173,64 +174,43 @@ class ExperimentService:
             current_seed = None
             current_strategy = getattr(config.strategy, "name", None)
             
-            # Run synchronously in thread executor to avoid blocking event loop
+            # Start experiment in background
             loop = asyncio.get_event_loop()
-            run_dir: Path = await loop.run_in_executor(None, run_experiment, config)
-
-            # Stream the run_log.jsonl to clients (offload file IO)
-            log_path = run_dir / "run_log.jsonl"
-            if log_path.exists():
-                def _read_lines():
-                    with open(log_path, 'r') as f:
-                        return f.readlines()
-                lines = await asyncio.to_thread(_read_lines)
-                for line in lines:
-                    try:
-                        evt = json.loads(line)
-                        if evt.get("event") == "novel_method_discovered":
-                            method_data = evt.get("data", {}).get("method", {})
-                            await self.connection_manager.broadcast(WSMessage.novel_method_discovered(method_data))
-                        else:
-                            # Update metrics based on event stream
-                            ev_name = evt.get("event", "log")
-                            if ev_name == "seed_start":
-                                try:
-                                    idx = int(evt.get("index", 0) or 0)
-                                    total = max(total, idx)
-                                except Exception:
-                                    pass
-                                current_seed = evt.get("seed_prompt")
-                            elif ev_name == "result":
-                                completed += 1
-                                current_strategy = evt.get("strategy", current_strategy)
-                                verdict = str(evt.get("adjudication", {}).get("verdict", "")).upper()
-                                if verdict == "SUCCESS":
-                                    successful += 1
-                                else:
-                                    failed += 1
-                            elif ev_name == "error":
-                                completed += 1
-                                failed += 1
-
-                            elapsed = (datetime.now() - started_at).total_seconds()
-                            metrics = {
-                                "total": total,
-                                "completed": completed,
-                                "successful": successful,
-                                "failed": failed,
-                                "successRate": (successful / completed) if completed else 0.0,
-                                "currentStrategy": current_strategy,
-                                "currentSeed": current_seed,
-                                "elapsedTime": int(elapsed),
-                            }
-                            event_data = {
-                                "event": ev_name,
-                                "data": evt,
-                                "level": "info"
-                            }
-                            await self.connection_manager.broadcast(WSMessage.experiment_progress(experiment_id, event_data, metrics))
-                    except Exception:
-                        continue
+            experiment_task = loop.create_task(
+                loop.run_in_executor(None, run_experiment, config)
+            )
+            
+            # Start log monitoring task for real-time streaming
+            # This will discover the log file once the experiment creates it
+            tail_task = loop.create_task(
+                self._monitor_experiment_logs(experiment_id, config, started_at)
+            )
+            
+            try:
+                # Wait for either experiment completion or cancellation
+                run_dir_result = await experiment_task
+                logger.info(f"Experiment {experiment_id} completed, stopping log tail")
+                
+                # Cancel the tailing task since experiment is done
+                tail_task.cancel()
+                try:
+                    await tail_task
+                except asyncio.CancelledError:
+                    pass  # Expected cancellation
+                    
+            except asyncio.CancelledError:
+                # If we're cancelled, make sure to cancel both tasks
+                experiment_task.cancel()
+                tail_task.cancel()
+                try:
+                    await experiment_task
+                except asyncio.CancelledError:
+                    pass
+                try:
+                    await tail_task
+                except asyncio.CancelledError:
+                    pass
+                raise
 
             # Update experiment status with thread safety
             async with self.experiments_lock:
@@ -278,3 +258,248 @@ class ExperimentService:
             
             if experiment_id in self.experiment_tasks:
                 del self.experiment_tasks[experiment_id]
+
+    async def _monitor_experiment_logs(self, experiment_id: str, config, started_at: datetime):
+        """Monitor for experiment log file creation and tail it in real-time."""
+        # Monitor the output directory for new experiment directories
+        output_dir = Path(config.output_dir)
+        
+        # Wait for a new directory to be created that matches our experiment pattern
+        log_path = None
+        max_discovery_wait = 60  # seconds to wait for log file discovery
+        discovery_wait = 0
+        
+        logger.info(f"Monitoring {output_dir} for new experiment directories...")
+        
+        while discovery_wait < max_discovery_wait and log_path is None:
+            try:
+                # Look for directories that contain our experiment name and were created recently
+                for potential_dir in output_dir.iterdir():
+                    if potential_dir.is_dir() and config.experiment_name in potential_dir.name:
+                        potential_log = potential_dir / "run_log.jsonl"
+                        if potential_log.exists():
+                            log_path = potential_log
+                            logger.info(f"Found experiment log file: {log_path}")
+                            break
+                            
+                if log_path is None:
+                    await asyncio.sleep(0.5)
+                    discovery_wait += 0.5
+                    
+            except Exception as e:
+                logger.warning(f"Error monitoring for log file: {e}")
+                await asyncio.sleep(1)
+                discovery_wait += 1
+                
+        if log_path is None:
+            logger.error(f"Could not discover log file for experiment {experiment_id} within {max_discovery_wait}s")
+            return
+            
+        # Now tail the discovered log file
+        await self._tail_log_file(experiment_id, log_path, started_at)
+
+    async def _tail_log_file(self, experiment_id: str, log_path: Path, started_at: datetime):
+        """Tail the log file in real-time and stream events to websocket clients."""
+        # Initialize metrics tracking  
+        total = 0
+        completed = 0
+        successful = 0
+        failed = 0
+        current_seed = None
+        current_strategy = None
+        processed_lines = 0
+        
+        # Wait for log file to be created (with timeout)
+        max_wait = 30  # seconds
+        wait_time = 0
+        while not log_path.exists() and wait_time < max_wait:
+            await asyncio.sleep(0.5)
+            wait_time += 0.5
+            
+        if not log_path.exists():
+            logger.warning(f"Log file {log_path} not created within {max_wait}s")
+            return
+            
+        logger.info(f"Starting real-time log tailing for {log_path}")
+        
+        try:
+            # Open file for reading and seek to end initially
+            with open(log_path, 'r', encoding='utf-8') as f:
+                # Start from the beginning since this is a new experiment
+                f.seek(0)
+                
+                while True:
+                    line = f.readline()
+                    if line:
+                        # Process the line
+                        try:
+                            evt = json.loads(line.strip())
+                            processed_lines += 1
+                            
+                            if evt.get("event") == "novel_method_discovered":
+                                method_data = evt.get("data", {}).get("method", {})
+                                await self.connection_manager.broadcast(
+                                    WSMessage.novel_method_discovered(method_data)
+                                )
+                            else:
+                                # Update metrics based on event stream
+                                ev_name = evt.get("event", "log")
+                                
+                                if ev_name == "seed_start":
+                                    try:
+                                        idx = int(evt.get("index", 0) or 0)
+                                        total = max(total, idx + 1)  # +1 because index is 0-based
+                                    except Exception:
+                                        pass
+                                    current_seed = evt.get("seed_prompt", "")[:50] + "..." if evt.get("seed_prompt", "") else None
+                                    
+                                elif ev_name == "result":
+                                    completed += 1
+                                    current_strategy = evt.get("strategy", current_strategy)
+                                    verdict = str(evt.get("adjudication", {}).get("verdict", "")).upper()
+                                    if verdict == "SUCCESS":
+                                        successful += 1
+                                    else:
+                                        failed += 1
+                                        
+                                elif ev_name == "error":
+                                    completed += 1
+                                    failed += 1
+
+                                # Calculate metrics
+                                elapsed = (datetime.now() - started_at).total_seconds()
+                                metrics = {
+                                    "total": total,
+                                    "completed": completed,
+                                    "successful": successful,
+                                    "failed": failed,
+                                    "successRate": (successful / completed) if completed > 0 else 0.0,
+                                    "currentStrategy": current_strategy,
+                                    "currentSeed": current_seed,
+                                    "elapsedTime": int(elapsed),
+                                }
+                                
+                                # Create event data
+                                event_data = {
+                                    "event": ev_name,
+                                    "data": evt,
+                                    "level": "info" if ev_name != "error" else "error"
+                                }
+                                
+                                # Broadcast the event with metrics
+                                await self.connection_manager.broadcast(
+                                    WSMessage.experiment_progress(experiment_id, event_data, metrics)
+                                )
+                                
+                        except json.JSONDecodeError:
+                            # Skip malformed JSON lines
+                            continue
+                        except Exception as e:
+                            logger.warning(f"Error processing log line: {e}")
+                            continue
+                    else:
+                        # No new line, wait a bit before checking again
+                        await asyncio.sleep(0.1)
+                        
+        except asyncio.CancelledError:
+            logger.info(f"Log tailing cancelled for experiment {experiment_id}")
+            raise
+        except Exception as e:
+            logger.error(f"Error during log tailing for experiment {experiment_id}: {e}")
+            # Send error event to clients
+            await self.connection_manager.broadcast(
+                WSMessage.experiment_error(experiment_id, f"Log monitoring error: {str(e)}")
+            )
+
+    async def test_vertex_connection(self, request: Dict[str, str]) -> Dict[str, Any]:
+        """Test Vertex AI connection using the provided endpoint configuration."""
+        try:
+            provider = request.get("provider")
+            if provider != "vertex":
+                return {
+                    "success": False,
+                    "error": "This test only supports Vertex AI provider",
+                    "status_code": 400
+                }
+            
+            model_id = request.get("model_id")
+            gcp_project = request.get("gcp_project")
+            gcp_location = request.get("gcp_location", "us-central1")
+            
+            if not model_id or not gcp_project:
+                return {
+                    "success": False,
+                    "error": "model_id and gcp_project are required for Vertex AI",
+                    "status_code": 400
+                }
+            
+            # Import here to avoid circular imports
+            from redxmoro.bedrock_client import VertexAIClient
+            
+            # Create a minimal Vertex AI client
+            client = VertexAIClient(
+                project=gcp_project,
+                location=gcp_location,
+                model=model_id,
+                max_tokens=1,  # Minimal token count for testing
+                temperature=0.1,
+                top_p=0.95
+            )
+            
+            # Make a simple test call
+            test_prompt = "Hello"
+            
+            # Run the test in an executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: client.complete(test_prompt)
+            )
+            
+            return {
+                "success": True,
+                "model_name": model_id,
+                "project": gcp_project,
+                "location": gcp_location,
+                "status_code": 200,
+                "message": "Connection successful! Authentication and permissions verified.",
+                "response_preview": response[:50] + "..." if len(response) > 50 else response
+            }
+            
+        except ImportError as e:
+            logger.error(f"Failed to import Vertex AI client: {e}")
+            return {
+                "success": False,
+                "error": "Vertex AI client not available. Check redxmoro installation.",
+                "status_code": 500
+            }
+        except Exception as e:
+            error_msg = str(e).lower()
+            
+            # Categorize common error types
+            if "401" in error_msg or "unauthorized" in error_msg:
+                status_code = 401
+                user_message = "Authentication failed. Run 'gcloud auth application-default login' or check service account credentials."
+            elif "403" in error_msg or "forbidden" in error_msg or "permission" in error_msg:
+                status_code = 403  
+                user_message = "Permission denied. Check that your account/service account has Vertex AI access for this project."
+            elif "404" in error_msg or "not found" in error_msg:
+                status_code = 404
+                user_message = f"Model '{model_id}' not found in region '{gcp_location}'. Check model availability."
+            elif "project" in error_msg and ("invalid" in error_msg or "not found" in error_msg):
+                status_code = 404
+                user_message = f"Project '{gcp_project}' not found or invalid. Verify the project ID."
+            else:
+                status_code = 500
+                user_message = f"Connection failed: {str(e)}"
+            
+            logger.error(f"Vertex AI connection test failed: {e}")
+            return {
+                "success": False,
+                "error": user_message,
+                "status_code": status_code,
+                "model_name": model_id,
+                "project": gcp_project,
+                "location": gcp_location,
+                "raw_error": str(e)
+            }

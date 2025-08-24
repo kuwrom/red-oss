@@ -182,6 +182,14 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
   const rawBase = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`
   // Ensure base URL does NOT end with "/api" or a trailing slash to avoid duplication when endpoints already include it
   const apiBaseUrl = rawBase.replace(/\/?api\/?$/, '').replace(/\/+$/, '')
+  const [baseUrl, setBaseUrl] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('apiBaseUrlOverride')
+      return saved || apiBaseUrl
+    } catch (_) {
+      return apiBaseUrl
+    }
+  })
 
   const fetchWithRetry = async (
     url: string,
@@ -190,7 +198,7 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
     backoff = 300,
     timeoutMs = 8000
   ) => {
-    const fullUrl = url.startsWith('http') ? url : `${apiBaseUrl}${url}`
+    const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`
     for (let i = 0; i < retries; i++) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -226,12 +234,54 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
     }
   }
 
+  const resolveBackendBaseUrl = async (): Promise<string | null> => {
+    // Try multiple candidates to be resilient to hostname/https issues
+    const candidates = Array.from(new Set([
+      baseUrl,
+      apiBaseUrl,
+      (import.meta.env.VITE_API_URL || '').replace(/\/?api\/?$/, '').replace(/\/+$/, ''),
+      `${window.location.protocol}//${window.location.hostname}:8000`,
+      `http://${window.location.hostname}:8000`,
+      'http://localhost:8000',
+      'http://127.0.0.1:8000'
+    ].filter(Boolean))) as string[]
+
+    for (const candidate of candidates) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 2000)
+      try {
+        const resp = await fetch(`${candidate}/api/status`, { method: 'GET', signal: controller.signal })
+        if (resp.ok) {
+          try { localStorage.setItem('apiBaseUrlOverride', candidate) } catch {}
+          setBaseUrl(candidate)
+          return candidate
+        }
+      } catch (_) {
+        // try next
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    return null
+  }
+
   const isBackendHealthy = async (): Promise<boolean> => {
+    // First try current baseUrl, else try to resolve a working one
     try {
-      await fetchWithRetry('/api/status', { method: 'GET' }, 1, 0, 2500)
+      await fetchWithRetry('/api/status', { method: 'GET' }, 1, 0, 2000)
       return true
     } catch (_) {
-      return false
+      const resolved = await resolveBackendBaseUrl()
+      if (!resolved) return false
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 2000)
+        const resp = await fetch(`${resolved}/api/status`, { method: 'GET', signal: controller.signal })
+        clearTimeout(timer)
+        return resp.ok
+      } catch {
+        return false
+      }
     }
   }
 
@@ -242,10 +292,9 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
       if (!healthy) {
         throw new Error('Backend is not reachable. Start it (./run.sh) or set VITE_API_URL.')
       }
-      // Ensure required Vertex fields are present
+      // Ensure optional Vertex fields have defaults, but don't auto-add gcp_project
       const ensureVertexFields = (ep: any) => {
         if (ep && ep.provider === 'vertex') {
-          if (!ep.gcp_project) ep.gcp_project = 'bid-algo'
           if (!ep.gcp_location) ep.gcp_location = ep.region || 'us-central1'
         }
         return ep

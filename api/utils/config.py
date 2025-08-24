@@ -28,13 +28,79 @@ def validate_experiment_config(request: ExperimentRequest) -> List[str]:
     if not request.target_model.get("model_name_or_path"):
         errors.append("Target model name or path is required")
     
-    # Attacker validation - require model_id for consistency
-    if not request.attacker.get("model_id"):
-        errors.append("Attacker model_id is required")
+    # Target model vertex-ai validation
+    target_model = request.target_model
+    if target_model.get("api_url") == "vertex-ai":
+        # Check if any attacker/adjudicator has gcp_project for target to use
+        has_gcp_project = False
+        available_gcp_projects = []
+        for endpoint_name, endpoint_cfg in [("attacker", request.attacker), ("adjudicator", request.adjudicator)]:
+            if endpoint_cfg and endpoint_cfg.get("gcp_project"):
+                has_gcp_project = True
+                available_gcp_projects.append(f"{endpoint_name} ({endpoint_cfg.get('gcp_project')})")
+                
+        if not has_gcp_project:
+            errors.append("Target model with 'vertex-ai' api_url requires at least one of attacker or adjudicator to have 'gcp_project' configured. The target model will use the same GCP project as the attacker/adjudicator for Vertex AI access.")
+        
+        # Validate target model name is compatible with Vertex AI
+        target_model_name = target_model.get("model_name_or_path", "")
+        valid_target_models = ["gemini-2.5-pro-target", "gpt-oss-20b-target", "auto-target"]
+        if target_model_name and target_model_name not in valid_target_models:
+            errors.append(f"Target model '{target_model_name}' with vertex-ai api_url must be one of: {', '.join(valid_target_models)}")
     
-    # Adjudicator validation - require model_id for consistency  
-    if not request.adjudicator.get("model_id"):
-        errors.append("Adjudicator model_id is required")
+    # Comprehensive endpoint validation
+    for endpoint_name, endpoint_cfg in [("attacker", request.attacker), ("adjudicator", request.adjudicator)]:
+        if not endpoint_cfg:
+            errors.append(f"{endpoint_name.capitalize()} configuration is required")
+            continue
+            
+        # Require model_id for all endpoints
+        if not endpoint_cfg.get("model_id"):
+            errors.append(f"{endpoint_name.capitalize()} model_id is required")
+            
+        # Require provider for all endpoints
+        if not endpoint_cfg.get("provider"):
+            errors.append(f"{endpoint_name.capitalize()} provider is required")
+        
+        # Validate provider is supported
+        provider = endpoint_cfg.get("provider", "").lower()
+        if provider and provider not in ["vertex", "google", "bedrock"]:
+            errors.append(f"{endpoint_name.capitalize()} provider '{provider}' is not supported. Use: vertex, google, or bedrock")
+            
+        # Provider-specific validation
+        if provider == "vertex":
+            # Require gcp_project for Vertex AI
+            if not endpoint_cfg.get("gcp_project"):
+                errors.append(f"{endpoint_name.capitalize()} with Vertex provider requires 'gcp_project'")
+            
+            # Validate gcp_project format (basic check)
+            gcp_project = endpoint_cfg.get("gcp_project", "").strip()
+            if gcp_project and ("-" in gcp_project or "_" in gcp_project):
+                # Basic format validation - GCP project IDs can contain lowercase letters, numbers, and hyphens
+                if not gcp_project.replace("-", "").replace("_", "").replace(".", "").isalnum():
+                    errors.append(f"{endpoint_name.capitalize()} gcp_project '{gcp_project}' contains invalid characters")
+            
+            # Optional: validate gcp_location if provided
+            gcp_location = endpoint_cfg.get("gcp_location")
+            if gcp_location and gcp_location not in ["us-central1", "us-east1", "us-west1", "europe-west1", "asia-southeast1", "global"]:
+                errors.append(f"{endpoint_name.capitalize()} gcp_location '{gcp_location}' may not be supported. Common locations: us-central1, us-east1, europe-west1, global")
+            
+            # Validate model_id is compatible with Vertex AI
+            model_id = endpoint_cfg.get("model_id", "")
+            if model_id and not (model_id.startswith("gemini-") or model_id.startswith("openai/")):
+                errors.append(f"{endpoint_name.capitalize()} model_id '{model_id}' may not be available on Vertex AI. Use 'gemini-*' or 'openai/*' models")
+        
+        elif provider == "google":
+            # Google AI validation - google_api_key_env defaults to "GOOGLE_API_KEY"
+            pass
+            
+        elif provider == "bedrock":
+            # Validate AWS region if specified
+            region = endpoint_cfg.get("region")
+            if region and not region.startswith("us-") and not region.startswith("eu-") and not region.startswith("ap-"):
+                errors.append(f"{endpoint_name.capitalize()} AWS region '{region}' format may be invalid. Use format like 'us-east-1'")
+    
+
     
     # Taxonomy validation
     taxonomy = request.taxonomy

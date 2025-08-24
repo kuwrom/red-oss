@@ -45,3 +45,9 @@ async def export_experiment(request: Dict[str, str]):
     
     export_data = await experiment_service.export_experiment(experiment_id, format_type)
     return JSONResponse(content=export_data)
+
+
+@router.post("/test-connection")
+async def test_vertex_connection(request: Dict[str, str]):
+    """Test Vertex AI connection and permissions."""
+    return await experiment_service.test_vertex_connection(request)

@@ -134,7 +134,6 @@ const defaultEndpoint: EndpointConfig = {
   provider: 'vertex',
   model_id: 'gemini-2.5-pro',
   region: 'us-east-1',
-  gcp_project: 'bid-algo', // Default GCP project for Vertex calls
   gcp_location: 'us-central1', // Common default location
   max_tokens: 1024,
   temperature: 0.7,

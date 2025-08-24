@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Play, Square, Zap, Users } from 'lucide-react'
+import React from 'react'
+import { Square, Zap, Users } from 'lucide-react'
 import { clsx } from 'clsx'
 
 interface Strategy {
@@ -17,6 +17,7 @@ interface QuickStartPanelProps {
   onStop: () => void
   status: 'idle' | 'running' | 'completed' | 'error'
   availableStrategies: Strategy[]
+  configErrors?: string[]
 }
 
 const quickStartPresets = [
@@ -48,10 +49,9 @@ export const QuickStartPanel: React.FC<QuickStartPanelProps> = ({
   onStartMultiple,
   onStop,
   status,
-  availableStrategies
+  availableStrategies,
+  configErrors = []
 }) => {
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
-
   const handlePresetStart = (preset: typeof quickStartPresets[0]) => {
     onStartMultiple(preset.strategies)
   }
@@ -61,7 +61,7 @@ export const QuickStartPanel: React.FC<QuickStartPanelProps> = ({
   }
 
   const isRunning = status === 'running'
-  const canStart = !isRunning
+  const canStart = !isRunning && configErrors.length === 0
 
   return (
     <div className="card">
@@ -75,6 +75,26 @@ export const QuickStartPanel: React.FC<QuickStartPanelProps> = ({
         </p>
       </div>
       <div className="card-content space-y-6">
+        {/* Configuration Errors Banner */}
+        {configErrors.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-start space-x-3">
+              <span className="text-red-500 mt-0.5">⚠️</span>
+              <div className="flex-1">
+                <h4 className="font-medium text-red-900">Configuration Required</h4>
+                <div className="text-sm text-red-700 mt-1">
+                  {configErrors.map((error, index) => (
+                    <p key={index} className="mb-1">{error}</p>
+                  ))}
+                </div>
+                <p className="text-sm text-red-600 mt-2">
+                  Please complete the configuration before starting experiments.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Status Banner */}
         {isRunning && (
           <div className="bg-primary-50 border border-primary-200 rounded-lg p-4">

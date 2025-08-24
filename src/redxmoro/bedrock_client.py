@@ -10,8 +10,6 @@ from botocore.config import Config as BotoConfig
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import os
 import requests
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Added for telemetry purposes
 import time
@@ -458,7 +456,7 @@ class VertexAIClient:
 
         if is_oss:
             # ---- GPT-OSS MAAS path ----
-            endpoint = f"https://{self.location}-aiplatform.googleapis.com/v1/projects/{self.project_id}/locations/{self.location}/endpoints/openapi/chat/completions"
+            endpoint = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/projects/{self.project_id}/locations/{self.location}/endpoints/openapi/chat/completions"
             messages: List[Dict[str, str]] = []
             
             # Use provided system prompt or generate dynamic one

@@ -6,7 +6,7 @@ import asyncio
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from websocket import ConnectionManager
+from api.websocket.connection_manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 

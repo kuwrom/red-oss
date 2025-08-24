@@ -48,7 +48,7 @@ except ImportError:
     HAS_SUBMISSION_COMPILER = False
 
 # Import our modular components
-from websocket import ConnectionManager
+from api.websocket.connection_manager import ConnectionManager
 from services import ExperimentService, ConfigService, SubmissionService
 from routes import (
     base_router,
