@@ -5,8 +5,8 @@ Submission management API routes.
 import logging
 from fastapi import APIRouter
 
-from models.experiment import SubmissionRequest
-from services import SubmissionService
+from api.models.experiment import SubmissionRequest
+from api.services import SubmissionService
 
 logger = logging.getLogger(__name__)
 

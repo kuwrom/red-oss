@@ -13,10 +13,10 @@ from typing import Dict, List, Any
 
 from fastapi import HTTPException
 
-from models.experiment import ExperimentRequest
+from api.models.experiment import ExperimentRequest
 from api.websocket.connection_manager import ConnectionManager
 from api.websocket.messages import WSMessage
-from utils.config import temp_config_file, validate_experiment_config, cleanup_temp_config
+from api.utils.config import temp_config_file, validate_experiment_config, cleanup_temp_config
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +438,7 @@ class ExperimentService:
             
             # Create a minimal Vertex AI client
             client = VertexAIClient(
-                project=gcp_project,
+                project_id=gcp_project,
                 location=gcp_location,
                 model=model_id,
                 max_tokens=1,  # Minimal token count for testing

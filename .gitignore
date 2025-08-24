@@ -29,3 +29,5 @@ results/
 
 # macOS metadata
 .DS_Store
+src/redxmoro/__pycache__/
+api/__pycache__/

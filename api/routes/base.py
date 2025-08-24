@@ -20,7 +20,7 @@ async def root():
 async def get_status():
     """Get server status and running experiments."""
     # Import here to avoid circular imports
-    from services import ExperimentService
+    from api.services import ExperimentService
     
     # Note: In the main refactored file, this will get the actual experiment service instance
     return {

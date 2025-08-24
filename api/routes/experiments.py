@@ -7,8 +7,8 @@ from typing import Dict
 from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import JSONResponse
 
-from models.experiment import ExperimentRequest
-from services import ExperimentService
+from api.models.experiment import ExperimentRequest
+from api.services import ExperimentService
 
 logger = logging.getLogger(__name__)
 

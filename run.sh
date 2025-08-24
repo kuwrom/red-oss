@@ -25,6 +25,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Port cleanup before starting services
+PORT_BACKEND=${API_PORT:-8000}
+PORT_FRONTEND=${PORT:-5173}
+
+cleanup_port() {
+  local port=$1
+  if lsof -i :${port} -t >/dev/null 2>&1; then
+    echo "⚠️  Port ${port} already in use – killing old process..."
+    lsof -i :${port} -t | xargs kill -9 || true
+    # Give OS a moment to release the socket
+    sleep 1
+  fi
+}
+
+cleanup_port ${PORT_BACKEND}
+cleanup_port ${PORT_FRONTEND}
+
 # Start the FastAPI backend (port 8000)
 echo "🔧 Starting FastAPI backend on :8000..."
 python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &

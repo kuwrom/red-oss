@@ -49,7 +49,7 @@ except ImportError:
 
 # Import our modular components
 from api.websocket.connection_manager import ConnectionManager
-from services import ExperimentService, ConfigService, SubmissionService
+from api.services import ExperimentService, ConfigService, SubmissionService
 from routes import (
     base_router,
     experiments_router, 
@@ -57,10 +57,10 @@ from routes import (
     submissions_router,
     websocket_router
 )
-from routes.experiments import set_experiment_service
-from routes.config import set_config_service
-from routes.submissions import set_submission_service
-from routes.websocket import set_connection_manager
+from api.routes.experiments import set_experiment_service
+from api.routes.config import set_config_service
+from api.routes.submissions import set_submission_service
+from api.routes.websocket import set_connection_manager
 
 # Initialize FastAPI app
 app = FastAPI(

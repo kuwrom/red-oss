@@ -13,7 +13,7 @@ import random
 
 from fastapi import HTTPException, responses
 
-from models.experiment import SubmissionRequest
+from api.models.experiment import SubmissionRequest
 
 logger = logging.getLogger(__name__)
 

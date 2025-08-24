@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any
 
-from models.experiment import ExperimentRequest
+from api.models.experiment import ExperimentRequest
 
 logger = logging.getLogger(__name__)
 

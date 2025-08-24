@@ -1,0 +1,94 @@
+{
+  "config": {
+    "experiment_name": "redxmoro_experiment",
+    "seed": 42,
+    "output_dir": "results",
+    "target_model": {
+      "model_name_or_path": "gpt-oss-20b-target",
+      "mode": "http",
+      "max_new_tokens": 512,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "stop": [],
+      "trust_remote_code": true,
+      "api_method": "POST",
+      "api_headers": {},
+      "api_timeout_s": 60,
+      "api_prompt_field": "prompt",
+      "api_extra_fields": {},
+      "api_response_path": "text",
+      "api_url": "vertex-ai",
+      "simulator": {
+        "kind": "rag",
+        "params": {}
+      }
+    },
+    "attacker": {
+      "provider": "vertex",
+      "model_id": "gemini-2.5-pro",
+      "region": "us-east-1",
+      "gcp_location": "us-central1",
+      "max_tokens": 1024,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "gcp_project": "bid-algo"
+    },
+    "adjudicator": {
+      "provider": "vertex",
+      "model_id": "gemini-2.5-pro",
+      "region": "us-east-1",
+      "gcp_location": "us-central1",
+      "max_tokens": 1024,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "gcp_project": "bid-algo"
+    },
+    "taxonomy": {
+      "risks_path": "configs/taxonomy/risks.yaml",
+      "patterns_path": "configs/taxonomy/patterns.yaml",
+      "num_seeds_per_combo": 10,
+      "generator": "bedrock",
+      "languages": [
+        "en",
+        "es",
+        "fr"
+      ],
+      "many_shot_num_examples": 3,
+      "augmentations": [
+        "base",
+        "manyshot",
+        "roleplay"
+      ],
+      "methods_path": "configs/taxonomy/methods.yaml",
+      "num_method_variants": 3,
+      "enable_hypotheses": true,
+      "num_hypotheses": 100,
+      "randomize_methods": true
+    },
+    "strategy": {
+      "name": "novelty_search",
+      "params": {
+        "max_turns": 6
+      }
+    },
+    "strategies": [],
+    "stop_on_success": true,
+    "long_context_tokens": 4000,
+    "tool_emulation": true,
+    "tools_enabled": false,
+    "strategy_presets": [],
+    "max_parallel_prompts": 1,
+    "max_parallel_strategies": 1,
+    "use_pattern_templates": true,
+    "template_strategies_limit": null,
+    "adjudication_orchestration": {
+      "mode": "automated",
+      "num_judges": 3,
+      "deliberation_rounds": 1,
+      "aggregation": "majority",
+      "use_kaggle_criteria": true
+    }
+  },
+  "apiKeys": {},
+  "savedAt": "2025-08-24T20:49:02.049812"
+}

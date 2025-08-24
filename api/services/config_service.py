@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 
 from fastapi import HTTPException
 
-from models.experiment import ConfigSaveRequest
+from api.models.experiment import ConfigSaveRequest
 
 logger = logging.getLogger(__name__)
 
