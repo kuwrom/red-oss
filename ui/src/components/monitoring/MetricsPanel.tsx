@@ -19,8 +19,8 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({ metrics }) => {
   }
 
   const getSuccessRate = () => {
-    if (metrics.completed === 0) return 0
-    return (metrics.successful / metrics.completed) * 100
+    // successRate is now already in percentage format from backend (0-100)
+    return metrics.successRate || 0
   }
 
   return (

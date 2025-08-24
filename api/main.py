@@ -24,8 +24,9 @@ if str(src_path) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure structured logging
+from api.middleware import setup_structured_logging
+setup_structured_logging()
 logger = logging.getLogger(__name__)
 
 # Import redxmoro modules with error handling
@@ -55,7 +56,9 @@ from api.routes import (
     experiments_router, 
     config_router,
     submissions_router,
-    websocket_router
+    websocket_router,
+    monitoring_router,
+    files_router
 )
 from api.routes.experiments import set_experiment_service
 from api.routes.config import set_config_service
@@ -68,6 +71,13 @@ app = FastAPI(
     description="Backend API for redxmoro AI Safety Testing Framework",
     version="1.0.0"
 )
+
+# Setup telemetry and observability
+from api.telemetry import setup_telemetry
+from api.middleware import ObservabilityMiddleware
+
+setup_telemetry(app, "redxmoro-api", "1.0.0")
+app.add_middleware(ObservabilityMiddleware)
 
 # For personal/local usage, allow all origins (disables CORS restrictions)
 app.add_middleware(
@@ -96,24 +106,35 @@ app.include_router(experiments_router)
 app.include_router(config_router)
 app.include_router(submissions_router)
 app.include_router(websocket_router)
+app.include_router(monitoring_router)
+app.include_router(files_router)
 
 # Update the status endpoint to use actual data
 @app.get("/api/status")
 async def get_status():
     """Get server status and running experiments."""
+    ws_stats = connection_manager.get_connection_stats()
     return {
         "status": "running",
         "experiments": len(experiment_service.experiments),
-        "active_connections": len(connection_manager.active_connections)
+        "active_connections": ws_stats["active_connections"],
+        "websocket_stats": ws_stats,
+        "instance_id": "redxmoro-api-v1.0.0"
     }
 
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unexpected error: {str(exc)}")
+    correlation_id = getattr(request.state, 'correlation_id', None)
+    logger.error(f"Unexpected error: {str(exc)}", extra={"correlation_id": correlation_id})
+    
+    response_content = {"detail": "An unexpected error occurred. Please check the server logs."}
+    if correlation_id:
+        response_content["correlationId"] = correlation_id
+    
     return JSONResponse(
         status_code=500,
-        content={"detail": "An unexpected error occurred. Please check the server logs."}
+        content=response_content
     )
 
 if __name__ == "__main__":

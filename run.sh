@@ -44,7 +44,8 @@ cleanup_port ${PORT_FRONTEND}
 
 # Start the FastAPI backend (port 8000)
 echo "🔧 Starting FastAPI backend on :8000..."
-python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &
+# Activate virtual environment and start backend
+source venv/bin/activate && python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 
 # Wait for backend to start

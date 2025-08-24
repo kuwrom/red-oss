@@ -456,7 +456,8 @@ class VertexAIClient:
 
         if is_oss:
             # ---- GPT-OSS MAAS path ----
-            endpoint = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/projects/{self.project_id}/locations/{self.location}/endpoints/openapi/chat/completions"
+            # Use GA v1 endpoint as per Google documentation (gpt-oss service)
+            endpoint = f"https://{self.location}-aiplatform.googleapis.com/v1/projects/{self.project_id}/locations/{self.location}/endpoints/openapi/chat/completions"
             messages: List[Dict[str, str]] = []
             
             # Use provided system prompt or generate dynamic one

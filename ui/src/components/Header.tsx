@@ -1,5 +1,5 @@
 import React from 'react'
-import { Shield, Activity, AlertTriangle } from 'lucide-react'
+import { Shield, Activity, AlertTriangle, Wifi, WifiOff } from 'lucide-react'
 import { useExperimentOptional } from '../contexts/ExperimentContext'
 
 export const Header: React.FC = () => {
@@ -8,6 +8,7 @@ export const Header: React.FC = () => {
   const status = exp?.status ?? 'idle'
   const currentExperiment = exp?.currentExperiment ?? null
   const metrics = exp?.metrics ?? null
+  const wsStatus = exp?.wsStatus
 
   const getStatusBadge = () => {
     switch (status) {
@@ -55,6 +56,20 @@ export const Header: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-6">
+            {/* WebSocket Status Indicator */}
+            {wsStatus && (
+              <div className="flex items-center space-x-2">
+                {wsStatus.connected ? (
+                  <Wifi className="w-4 h-4 text-green-500" />
+                ) : (
+                  <WifiOff className="w-4 h-4 text-red-500" />
+                )}
+                <span className={`text-sm font-medium ${wsStatus.connected ? 'text-green-600' : 'text-red-600'}`}>
+                  {wsStatus.connected ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
+            )}
+            
             {currentExperiment && (
               <div className="text-sm text-gray-600">
                 <span className="font-medium">Experiment:</span> {currentExperiment.name}

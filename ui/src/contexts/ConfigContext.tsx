@@ -288,6 +288,29 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
   }
 
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem('redxmoro_config')
+      const savedKeys = localStorage.getItem('redxmoro_api_keys')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setConfig(prev => ({ ...prev, ...parsed }))
+      }
+      if (savedKeys) {
+        const parsedKeys = JSON.parse(savedKeys)
+        setApiKeys(prev => ({ ...prev, ...parsedKeys }))
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    try { localStorage.setItem('redxmoro_config', JSON.stringify(config)) } catch {}
+  }, [config])
+
+  useEffect(() => {
+    try { localStorage.setItem('redxmoro_api_keys', JSON.stringify(apiKeys)) } catch {}
+  }, [apiKeys])
+
+  useEffect(() => {
     refreshSavedConfigs()
   }, [])
 

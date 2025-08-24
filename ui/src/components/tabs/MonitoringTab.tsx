@@ -5,8 +5,12 @@ import { ExperimentFlow } from '../monitoring/ExperimentFlow'
 import { EventsTimeline } from '../monitoring/EventsTimeline'
 import { MetricsPanel } from '../monitoring/MetricsPanel'
 import { LiveAttackViewer } from '../monitoring/LiveAttackViewer'
+import { SystemStatus } from '../monitoring/SystemStatus'
+import { RealTimeExperimentStatus } from '../monitoring/RealTimeExperimentStatus'
+import { DeepExperimentInspector } from '../monitoring/DeepExperimentInspector'
+import { ExperimentFileBrowser } from '../monitoring/ExperimentFileBrowser'
 
-type ViewMode = 'flow' | 'timeline' | 'live-attacks'
+type ViewMode = 'realtime' | 'deep' | 'files' | 'flow' | 'timeline' | 'live-attacks' | 'system'
 
 export const MonitoringTab: React.FC = () => {
   const { 
@@ -18,7 +22,7 @@ export const MonitoringTab: React.FC = () => {
     clearEvents 
   } = useExperiment()
   
-  const [viewMode, setViewMode] = useState<ViewMode>('flow')
+  const [viewMode, setViewMode] = useState<ViewMode>('realtime')
   const [autoScroll, setAutoScroll] = useState(true)
 
   const getStatusColor = () => {
@@ -49,14 +53,22 @@ export const MonitoringTab: React.FC = () => {
 
   const renderViewContent = () => {
     switch (viewMode) {
+      case 'realtime':
+        return <RealTimeExperimentStatus />
+      case 'deep':
+        return <DeepExperimentInspector />
+      case 'files':
+        return <ExperimentFileBrowser />
       case 'flow':
         return <ExperimentFlow />
       case 'timeline':
         return <EventsTimeline events={events} autoScroll={autoScroll} />
       case 'live-attacks':
         return <LiveAttackViewer />
+      case 'system':
+        return <SystemStatus />
       default:
-        return <ExperimentFlow />
+        return <RealTimeExperimentStatus />
     }
   }
 
@@ -113,6 +125,36 @@ export const MonitoringTab: React.FC = () => {
             {/* View Mode Selector */}
             <div className="flex items-center space-x-1 bg-gray-100 rounded-lg p-1">
               <button
+                onClick={() => setViewMode('realtime')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === 'realtime'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Real-time
+              </button>
+              <button
+                onClick={() => setViewMode('deep')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === 'deep'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Deep Inspector
+              </button>
+              <button
+                onClick={() => setViewMode('files')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === 'files'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Files
+              </button>
+              <button
                 onClick={() => setViewMode('flow')}
                 className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                   viewMode === 'flow'
@@ -141,6 +183,16 @@ export const MonitoringTab: React.FC = () => {
                 }`}
               >
                 Live Attacks
+              </button>
+              <button
+                onClick={() => setViewMode('system')}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === 'system'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                System
               </button>
             </div>
           </div>

@@ -45,6 +45,13 @@ export interface CurrentExperiment {
   configSnapshot: any
 }
 
+export interface WebSocketStatus {
+  connected: boolean
+  lastHeartbeat?: string
+  reconnectAttempts: number
+  lastError?: string
+}
+
 interface ExperimentContextType {
   currentExperiment: CurrentExperiment | null
   status: 'idle' | 'running' | 'completed' | 'error'
@@ -52,6 +59,7 @@ interface ExperimentContextType {
   events: ExperimentEvent[]
   novelMethods: NovelMethod[]
   runningStrategies: string[]
+  wsStatus: WebSocketStatus
   startExperiment: (config: any) => Promise<void>
   stopExperiment: (experimentId?: string) => Promise<void>
   clearEvents: () => void
@@ -82,6 +90,10 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
   const [events, setEvents] = useState<ExperimentEvent[]>([])
   const [novelMethods, setNovelMethods] = useState<NovelMethod[]>([])
   const [runningStrategies, setRunningStrategies] = useState<string[]>([])
+  const [wsStatus, setWsStatus] = useState<WebSocketStatus>({
+    connected: false,
+    reconnectAttempts: 0
+  })
   const socketRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -96,12 +108,20 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
 
     ws.onopen = () => {
       console.log('Connected to experiment server (WS)')
+      setWsStatus(prev => ({ ...prev, connected: true, reconnectAttempts: 0, lastError: undefined }))
     }
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
         const type = msg.type
+        
+        // Handle heartbeat messages
+        if (type === 'heartbeat') {
+          setWsStatus(prev => ({ ...prev, lastHeartbeat: new Date().toISOString() }))
+          return // Just acknowledge, no action needed
+        }
+        
         if (type === 'experiment_started') {
           setCurrentExperiment(msg.experiment)
           setStatus('running')
@@ -109,11 +129,14 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
           return
         }
         if (type === 'experiment_progress') {
-          if (msg.metrics) setMetrics(msg.metrics)
+          if (msg.metrics) {
+            // successRate is now already in percentage format (0-100)
+            setMetrics(msg.metrics)
+          }
           if (msg.event) {
             const newEvent: ExperimentEvent = {
               id: Date.now().toString(),
-              timestamp: new Date().toISOString(),
+              timestamp: msg.timestamp || new Date().toISOString(),
               event: msg.event.event,
               data: msg.event.data,
               level: msg.event.level || 'info'
@@ -128,14 +151,44 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
             byId.set(msg.method.id, msg.method)
             return Array.from(byId.values())
           })
+          
+          // Add novel method discovered event
+          const newEvent: ExperimentEvent = {
+            id: Date.now().toString(),
+            timestamp: msg.timestamp || new Date().toISOString(),
+            event: 'novel_method_discovered',
+            data: { method: msg.method },
+            level: 'info'
+          }
+          setEvents(prev => [newEvent, ...prev].slice(0, 1000))
           return
         }
         if (type === 'strategy_started') {
           setRunningStrategies(prev => [...new Set([...prev, msg.strategy])])
+          
+          // Add strategy started event
+          const newEvent: ExperimentEvent = {
+            id: Date.now().toString(),
+            timestamp: msg.timestamp || new Date().toISOString(),
+            event: 'strategy_started',
+            data: { strategy: msg.strategy },
+            level: 'info'
+          }
+          setEvents(prev => [newEvent, ...prev].slice(0, 1000))
           return
         }
         if (type === 'strategy_completed') {
           setRunningStrategies(prev => prev.filter(s => s !== msg.strategy))
+          
+          // Add strategy completed event
+          const newEvent: ExperimentEvent = {
+            id: Date.now().toString(),
+            timestamp: msg.timestamp || new Date().toISOString(),
+            event: 'strategy_completed',
+            data: { strategy: msg.strategy },
+            level: 'info'
+          }
+          setEvents(prev => [newEvent, ...prev].slice(0, 1000))
           return
         }
         if (type === 'experiment_completed') {
@@ -149,7 +202,7 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
           setRunningStrategies([])
           const errorEvent: ExperimentEvent = {
             id: Date.now().toString(),
-            timestamp: new Date().toISOString(),
+            timestamp: msg.timestamp || new Date().toISOString(),
             event: 'error',
             data: msg,
             level: 'error'
@@ -157,16 +210,23 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
           setEvents(prev => [errorEvent, ...prev])
           return
         }
+        if (type === 'experiment_stopped') {
+          setStatus('idle')
+          setRunningStrategies([])
+          return
+        }
       } catch (e) {
-        // ignore malformed messages
+        console.warn('Failed to parse WebSocket message:', e)
       }
     }
 
-    ws.onerror = () => {
-      setStatus('error')
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error)
+      setWsStatus(prev => ({ ...prev, connected: false, lastError: 'Connection error' }))
     }
 
     ws.onclose = () => {
+      setWsStatus(prev => ({ ...prev, connected: false, reconnectAttempts: prev.reconnectAttempts + 1 }))
       setStatus(prev => (prev === 'running' ? 'error' : prev))
     }
 
@@ -349,6 +409,7 @@ export const ExperimentProvider: React.FC<ExperimentProviderProps> = ({ children
     events,
     novelMethods,
     runningStrategies,
+    wsStatus,
     startExperiment,
     stopExperiment,
     clearEvents,

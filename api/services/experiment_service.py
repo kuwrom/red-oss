@@ -12,13 +12,30 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 from fastapi import HTTPException
+from opentelemetry import metrics
 
 from api.models.experiment import ExperimentRequest
 from api.websocket.connection_manager import ConnectionManager
 from api.websocket.messages import WSMessage
 from api.utils.config import temp_config_file, validate_experiment_config, cleanup_temp_config
+from api.utils.redaction import redact_pii_from_dict
 
 logger = logging.getLogger(__name__)
+
+# Metrics
+meter = metrics.get_meter(__name__)
+experiment_events_counter = meter.create_counter(
+    "experiment_events_total",
+    description="Total number of experiment events by type"
+)
+experiment_duration_histogram = meter.create_histogram(
+    "experiment_duration_seconds",
+    description="Experiment duration in seconds"
+)
+pii_redactions_counter = meter.create_counter(
+    "pii_redactions_total",
+    description="Total number of PII redactions performed"
+)
 
 
 class ExperimentService:
@@ -30,7 +47,7 @@ class ExperimentService:
         self.experiment_tasks: Dict[str, asyncio.Task] = {}
         self.experiments_lock = asyncio.Lock()
 
-    async def start_experiment(self, request: ExperimentRequest) -> Dict[str, Any]:
+    async def start_experiment(self, request: ExperimentRequest, correlation_id: str = None) -> Dict[str, Any]:
         """Start a new experiment."""
         try:
             # Apply provided API keys to environment for this process
@@ -59,22 +76,25 @@ class ExperimentService:
                         "status": "running",
                         "startedAt": datetime.now().isoformat(),
                         "config": config.asdict(),
-                        "configPath": None  # No longer needed since temp file is auto-cleaned
+                        "configPath": None,  # No longer needed since temp file is auto-cleaned
+                        "correlationId": correlation_id
                     }
                 
                 # Start experiment in background and track the task
-                task = asyncio.create_task(self._run_experiment_async(experiment_id, config))
+                task = asyncio.create_task(self._run_experiment_async(experiment_id, config, correlation_id))
                 self.experiment_tasks[experiment_id] = task
                 
                 # Notify websocket clients using standardized message
-                await self.connection_manager.broadcast(WSMessage.experiment_started(self.experiments[experiment_id]))
+                await self.connection_manager.broadcast(
+                    WSMessage.experiment_started(self.experiments[experiment_id], correlation_id)
+                )
                 
                 return {"success": True, "experiment": self.experiments[experiment_id]}
         except Exception as e:
-            logger.error(f"Failed to start experiment: {e}")
+            logger.error(f"Failed to start experiment: {e}", extra={"correlation_id": correlation_id})
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def stop_experiment(self, experiment_id: str = None) -> Dict[str, Any]:
+    async def stop_experiment(self, experiment_id: str = None, correlation_id: str = None) -> Dict[str, Any]:
         """Stop an experiment or all experiments."""
         try:
             stopped_experiments = []
@@ -96,7 +116,7 @@ class ExperimentService:
                             # Clean up temp config file
                             cleanup_temp_config(experiment_id, self.experiments)
                     
-                    await self.connection_manager.broadcast(WSMessage.experiment_stopped(experiment_id))
+                    await self.connection_manager.broadcast(WSMessage.experiment_stopped(experiment_id, correlation_id))
             else:
                 # Stop all running experiments
                 for exp_id in list(self.experiment_tasks.keys()):
@@ -114,11 +134,11 @@ class ExperimentService:
                             # Clean up temp config file
                             cleanup_temp_config(exp_id, self.experiments)
                     
-                    await self.connection_manager.broadcast(WSMessage.experiment_stopped(exp_id))
+                    await self.connection_manager.broadcast(WSMessage.experiment_stopped(exp_id, correlation_id))
             
             return {"success": True, "stoppedExperiments": stopped_experiments}
         except Exception as e:
-            logger.error(f"Failed to stop experiment: {e}")
+            logger.error(f"Failed to stop experiment: {e}", extra={"correlation_id": correlation_id})
             raise HTTPException(status_code=500, detail=str(e))
 
     async def export_experiment(self, experiment_id: str, format_type: str = "json") -> Dict[str, Any]:
@@ -157,13 +177,16 @@ class ExperimentService:
             # Do not block on env assignment
             pass
 
-    async def _run_experiment_async(self, experiment_id: str, config):
+    async def _run_experiment_async(self, experiment_id: str, config, correlation_id: str = None):
         """Run experiment asynchronously and update via websockets."""
         try:
             from redxmoro.runner import run_experiment
             
-            logger.info(f"Starting experiment {experiment_id}")
-            await self.connection_manager.broadcast(WSMessage.strategy_started(config.strategy.name))
+            logger.info(f"Starting experiment {experiment_id}", extra={"correlation_id": correlation_id, "experiment_id": experiment_id})
+            experiment_events_counter.add(1, {"event": "experiment_started", "strategy": config.strategy.name})
+            await self.connection_manager.broadcast(
+                WSMessage.strategy_started(config.strategy.name, experiment_id, correlation_id)
+            )
             
             # Initialize metrics tracking
             started_at = datetime.now()
@@ -176,14 +199,14 @@ class ExperimentService:
             
             # Start experiment in background
             loop = asyncio.get_event_loop()
-            experiment_task = loop.create_task(
+            experiment_task = asyncio.create_task(
                 loop.run_in_executor(None, run_experiment, config)
             )
             
             # Start log monitoring task for real-time streaming
             # This will discover the log file once the experiment creates it
-            tail_task = loop.create_task(
-                self._monitor_experiment_logs(experiment_id, config, started_at)
+            tail_task = asyncio.create_task(
+                self._monitor_experiment_logs(experiment_id, config, started_at, correlation_id)
             )
             
             try:
@@ -221,9 +244,18 @@ class ExperimentService:
                     # Clean up temp config file
                     cleanup_temp_config(experiment_id, self.experiments)
             
-            await self.connection_manager.broadcast(WSMessage.strategy_completed(config.strategy.name))
-            await self.connection_manager.broadcast(WSMessage.experiment_completed(experiment_id))
-            logger.info(f"Experiment {experiment_id} completed")
+            await self.connection_manager.broadcast(
+                WSMessage.strategy_completed(config.strategy.name, experiment_id, correlation_id)
+            )
+            await self.connection_manager.broadcast(
+                WSMessage.experiment_completed(experiment_id, correlation_id)
+            )
+            logger.info(f"Experiment {experiment_id} completed", extra={"correlation_id": correlation_id, "experiment_id": experiment_id})
+            
+            # Record experiment duration
+            duration = (datetime.now() - started_at).total_seconds()
+            experiment_duration_histogram.record(duration, {"strategy": config.strategy.name})
+            experiment_events_counter.add(1, {"event": "experiment_completed", "strategy": config.strategy.name})
             
             # Clean up task tracking
             if experiment_id in self.experiment_tasks:
@@ -254,12 +286,12 @@ class ExperimentService:
                     # Clean up temp config file
                     cleanup_temp_config(experiment_id, self.experiments)
             
-            await self.connection_manager.broadcast(WSMessage.experiment_error(experiment_id, str(e)))
+            await self.connection_manager.broadcast(WSMessage.experiment_error(experiment_id, str(e), correlation_id))
             
             if experiment_id in self.experiment_tasks:
                 del self.experiment_tasks[experiment_id]
 
-    async def _monitor_experiment_logs(self, experiment_id: str, config, started_at: datetime):
+    async def _monitor_experiment_logs(self, experiment_id: str, config, started_at: datetime, correlation_id: str = None):
         """Monitor for experiment log file creation and tail it in real-time."""
         # Monitor the output directory for new experiment directories
         output_dir = Path(config.output_dir)
@@ -296,9 +328,9 @@ class ExperimentService:
             return
             
         # Now tail the discovered log file
-        await self._tail_log_file(experiment_id, log_path, started_at)
+        await self._tail_log_file(experiment_id, log_path, started_at, correlation_id)
 
-    async def _tail_log_file(self, experiment_id: str, log_path: Path, started_at: datetime):
+    async def _tail_log_file(self, experiment_id: str, log_path: Path, started_at: datetime, correlation_id: str = None):
         """Tail the log file in real-time and stream events to websocket clients."""
         # Initialize metrics tracking  
         total = 0
@@ -338,8 +370,28 @@ class ExperimentService:
                             
                             if evt.get("event") == "novel_method_discovered":
                                 method_data = evt.get("data", {}).get("method", {})
+                                # Redact PII from method data before broadcasting
+                                redacted_method_data = redact_pii_from_dict(method_data)
+                                pii_redactions_counter.add(1, {"type": "novel_method"})
+                                experiment_events_counter.add(1, {"event": "novel_method_discovered"})
                                 await self.connection_manager.broadcast(
-                                    WSMessage.novel_method_discovered(method_data)
+                                    WSMessage.novel_method_discovered(redacted_method_data, experiment_id, correlation_id)
+                                )
+                            elif evt.get("event") == "result":
+                                # Broadcast detailed result for deep inspection
+                                # Redact PII from the entire result before broadcasting
+                                redacted_result = redact_pii_from_dict(evt)
+                                pii_redactions_counter.add(1, {"type": "detailed_result"})
+                                experiment_events_counter.add(1, {"event": "detailed_result"})
+                                
+                                # Send as experiment_progress with the detailed result data
+                                event_data = {
+                                    "event": "result",
+                                    "data": redacted_result,
+                                    "level": "info"
+                                }
+                                await self.connection_manager.broadcast(
+                                    WSMessage.experiment_progress(experiment_id, event_data, metrics, correlation_id)
                                 )
                             else:
                                 # Update metrics based on event stream
@@ -379,16 +431,19 @@ class ExperimentService:
                                     "elapsedTime": int(elapsed),
                                 }
                                 
-                                # Create event data
+                                # Create event data with PII redaction
+                                redacted_evt = redact_pii_from_dict(evt)
+                                pii_redactions_counter.add(1, {"type": "experiment_event"})
+                                experiment_events_counter.add(1, {"event": ev_name})
                                 event_data = {
                                     "event": ev_name,
-                                    "data": evt,
+                                    "data": redacted_evt,
                                     "level": "info" if ev_name != "error" else "error"
                                 }
                                 
                                 # Broadcast the event with metrics
                                 await self.connection_manager.broadcast(
-                                    WSMessage.experiment_progress(experiment_id, event_data, metrics)
+                                    WSMessage.experiment_progress(experiment_id, event_data, metrics, correlation_id)
                                 )
                                 
                         except json.JSONDecodeError:
@@ -438,9 +493,9 @@ class ExperimentService:
             
             # Create a minimal Vertex AI client
             client = VertexAIClient(
+                model_id=model_id,
                 project_id=gcp_project,
                 location=gcp_location,
-                model=model_id,
                 max_tokens=1,  # Minimal token count for testing
                 temperature=0.1,
                 top_p=0.95
